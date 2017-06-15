@@ -126,6 +126,7 @@ def main(_):
             # save_path = saver.save(sess, checkpoint_dir + os.sep + ckpt_name)
             # print("Model saved in file: %s" % save_path)
         else:
+
             ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
             saver.restore(sess, ckpt.model_checkpoint_path)
             # f = open('/home/zj/Desktop/data.txt', 'w')
@@ -139,38 +140,50 @@ def main(_):
             #     # plt.imshow(full_image)
             #     # plt.show()
             # f.close()
-            xs, ys = driving_data.LoadTrainBatch(1)
-            # plt.imshow(xs[0])
-            # plt.show()
-            rj_final_op = tf.multiply(y, y_)
-            r_input, rj_final_val = sess.run([nn.relevance_backprop(rj_final_op), rj_final_op],
-                                             feed_dict={x: xs, y_: ys, keep_prob: 1.0})
+            # xs, ys = driving_data.LoadTrainBatch(1)
 
-            r_input_img = np.squeeze(r_input )
+            # nn.nvidia_deconv()
+            for i in range(10):
+                xs, ys = driving_data.LoadTrainBatch(1)
+                # plt.imshow(xs[0])
+                # plt.show()
+                xxxx = fc1.output.eval(feed_dict={x: xs, y_: ys, keep_prob: 1.0})
 
-            r_input_sum = np.sum(r_input)
+                rj_final_op = tf.multiply(y, y_)
 
-            print "Rj final {}, Rj sum {}".format(np.sum(rj_final_val), r_input_sum)
+                r_input, rj_final_val = sess.run([nn.relevance_backprop_lrp(rj_final_op, 1, 0.0), rj_final_op],
+                                                 feed_dict={x: xs, y_: ys, keep_prob: 1.0})
+                # r_input, rj_final_val = sess.run([nn.relevance_backprop(rj_final_op), rj_final_op],
+                #                                  feed_dict={x: xs, y_: ys, keep_prob: 1.0})
 
-            # utils.visualize(r_input[:,2:-2,2:-2],utils.heatmap,'deeptaylortest_'+str(i)+'_.png')
+                # r_input = sess.run([nn.nvidia_deconv()],
+                #                    feed_dict={x: xs, y_: ys, keep_prob: 1.0})
+                r_input_img = np.squeeze(r_input / np.max(r_input))
 
-            # Display original input
-            # plt.imshow(np.reshape(np.asarray(batch_xs),(28,28)))
+                r_input_sum = np.sum(r_input)
 
-            yguess_mat = sess.run(y,
-                                  feed_dict={x: xs, y_: ys,keep_prob:1.0})
-            # yguess = yguess_mat.tolist()
-            # yguess = yguess[0].index(max(yguess[0]))
-            # actual = ys[0].tolist().index(1.)
-            #
-            # print ("Guess:", (yguess))
-            # print ("Actual:", (actual))
+                # print "Rj final {}, Rj sum {}".format(np.sum(rj_final_val), r_input_sum)
 
-            # Display relevance heatmap
-            # fig, ax = plt.subplots()
-            # im = ax.imshow(r_input_img, cmap=plt.cm.Reds, interpolation='nearest')
-            # ax.format_coord = Formatter(im)
-            plt.imshow(r_input_img )
-            plt.show()
+                # utils.visualize(r_input[:,2:-2,2:-2],utils.heatmap,'deeptaylortest_'+str(i)+'_.png')
+
+                # Display original input
+                # plt.imshow(np.reshape(np.asarray(batch_xs),(28,28)))
+
+                yguess_mat = sess.run(y,
+                                      feed_dict={x: xs, y_: ys,keep_prob:1.0})
+                # yguess = yguess_mat.tolist()
+                # yguess = yguess[0].index(max(yguess[0]))
+                # actual = ys[0].tolist().index(1.)
+                #
+                # print ("Guess:", (yguess))
+                # print ("Actual:", (actual))
+
+                # Display relevance heatmap
+                fig, (ax ,xx)= plt.subplots(2, 1, sharey=True)
+                # im = ax.imshow(r_input_img, cmap=plt.cm.Reds, interpolation='nearest')
+                im = ax.imshow(r_input_img)
+                im = xx.imshow(xs[0])
+                # plt.imshow( r_input_img)
+                plt.show()
 if __name__ == '__main__':
     tf.app.run()

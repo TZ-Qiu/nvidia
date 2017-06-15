@@ -169,10 +169,26 @@ class Network:
                 
         input_x_relevance = prev_layer_rj
         return input_x_relevance
-      
-               
 
-    
+    def relevance_backprop_lrp(self,final_rj,alpha,beta):
+        """
+
+        :param final_rj: final output
+        :return: each num equation in tensors
+        """
+        num_layers = len(self.layers)
+        first_layer_ind = num_layers - 1
+        # Propogate relevance from the last layer to the input layer
+        prev_layer_rj = final_rj
+        for i, layer in enumerate(self.layers[::-1]):
+            prev_layer_rj = layer.relevance_backprop_lrp(prev_layer_rj,alpha,beta)
+        return prev_layer_rj
+
+    def visualize_back_prop(self):
+        for i, layer in enumerate(self.layers):
+            if layer.__class__ == Conv2d:
+                layer.average_image()
+
 class Layer:
     def get_layers_list(self):
         '''
@@ -198,7 +214,7 @@ class Layer:
     def backward(self,DY):
         return self.gradprop(DY)
 
-    
+
          
 class Linear(Layer):
     def __init__(self,input_layer,output_size,name,custom=None):
@@ -258,14 +274,19 @@ class Linear(Layer):
     def relevance_backprop_zplus(self,Rj):
         #Linear Layer
         X = self.X
+
+        # print X.eval()
         #print (self.X.get_shape()[0])
+        #weight > 0
         V = tf.maximum(0.,self.W)
+        # sigma(xi * w>0)
         Z = tf.matmul(X,V)+1e-9
+
         S = tf.div(Rj,Z)
         C = tf.matmul(S,tf.transpose(V)) # S by maxed weights
         #xfi = tf.multiply(self.X,C)
         Ri = tf.multiply(X, C)
-
+        C = tf.multiply(X, C)
         return Ri
         
 
@@ -284,20 +305,44 @@ class Linear(Layer):
 
         L = tf.ones_like(self.X,dtype=tf.float32)*self.lowest
         H = tf.ones_like(self.X,dtype=tf.float32)*self.highest
-        #W_max = tf.maximum(0.,self.W) 
-        #W_min = tf.minimum(0.,self.W)
+        W_max = tf.maximum(0.,self.W)
+        W_min = tf.minimum(0.,self.W)
         
         #L and H should be matrices with the same dims as self.x
         #x_shape = self.x.get_shape()[1] #Note dim0 will be ? if self.x is placeholder
         Z = tf.matmul(self.X,self.W)-tf.matmul(L,W_max) - tf.matmul(H,W_min) + 1e-9
         S =tf.div( Rj,Z)
-        Ri = self.X*tf.matmul(S,tf.transpose(self.W))-L*tf.matmul(S,tf.transpose(V))-H*tf.matmul(S,tf.transpose(U))
+        Ri = self.X*tf.matmul(S,tf.transpose(self.W))-L*tf.matmul(S,tf.transpose(W_max))-H*tf.matmul(S,tf.transpose(W_min))
         return Ri
 
-    
-    
-    
-          
+    def relevance_backprop_lrp(self, Rj, alpha , beta):
+        X = tf.matmul(self.X,self.W)
+        Z_ij = tf.matmul(self.X,self.W)
+        B_plus = tf.maximum(0.,self.B)
+        B_minus = tf.minimum(0.,self.B)
+        W_max = tf.maximum(0., self.W)
+        W_min = tf.minimum(0., self.W)
+        Z_j_positive = tf.maximum(0.,X)+ B_plus
+        Z_j_nagetive = tf.minimum(0.,X)+ B_minus
+        Z_ij_positive = tf.maximum(0.,Z_ij)
+        Z_ij_nagetive = tf.minimum(0.,Z_ij)
+
+        alpha = tf.ones_like(Z_j_positive,dtype=tf.float32)*alpha
+        beta = tf.ones_like(Z_j_nagetive, dtype=tf.float32) * beta
+
+
+
+        A = tf.div(alpha,Z_j_positive)
+        C = tf.div(beta, Z_j_nagetive)
+        D = tf.multiply(Rj,A)
+        E =  tf.multiply(Rj,C)
+        D = tf.matmul(D,tf.transpose(W_max))
+        E = tf.matmul(E, tf.transpose(W_min))
+        # Z_ij_positive = tf.add(D , B)
+        # Z_ij_nagetive = tf.add(E , B)
+        Ri = tf.add(D,E)
+        return Ri
+
 
 class Relu(Layer):
     def __init__(self,input_layer,name=''):
@@ -334,7 +379,9 @@ class Relu(Layer):
         #Just return the input
         return Rj
 
-
+    def relevance_backprop_lrp(self,Rj,alpha,beta):
+        #Just return the input
+        return Rj
 
 class Flatten(Layer):
     def __init__(self,input_layer,name=''):
@@ -363,13 +410,17 @@ class Flatten(Layer):
     def forward(self):
         return tf.reshape (self.X,[-1,np.prod(self.input_shape[1::])])
 
-    def relevance_backprop_zbeta(self,DY):
-        return relevance_backprop_zplus(DY)
+
         
     def relevance_backprop_zplus(self,DY):
         #print "Deflattening to", self.input_shape
         return tf.reshape (DY,self.input_shape)
 
+    def relevance_backprop_zbeta(self, DY):
+        return self.relevance_backprop_zplus(DY)
+
+    def relevance_backprop_lrp(self,DY,alpha,beta):
+        return self.relevance_backprop_zplus(DY)
 
 
        
@@ -392,6 +443,7 @@ class Conv2d(Layer):
         self.padding = padding
         self.strides = strides
         self.name = name
+
         #self.name
         with tf.variable_scope(self.name) as scope:
             self.W = init_weights('weights',shape=self.filter_shape)
@@ -480,7 +532,8 @@ class Conv2d(Layer):
         
         W_max = tf.maximum(0.,self.W)
         zero_bias = tf.zeros_like(self.B,dtype=tf.float32)
-        Z = self.forward(self.X,W_max,zero_bias)
+        w = tf.ones_like(W_max,dtype=tf.float32)
+        Z = self.forward(self.X,W_max,self.B)
         S = tf.div(Rj,Z)
         C = self.gradprop(S,W_max)
         Ri = tf.multiply(self.X,C)
@@ -509,9 +562,37 @@ class Conv2d(Layer):
         S = tf.div(Rj,Z)
         Ri = self.X*self.gradprop(S,self.W)-H*self.gradprop(S,W_min)-L*self.gradprop(S,W_max)
         return Ri
-        
+
+    def relevance_backprop_lrp(self, Rj, alpha, beta):
+        X = self.X
+        B_plus = tf.maximum(0., self.B)
+        B_minus = tf.minimum(0., self.B)
+        W_max = tf.maximum(0., self.W)
+        W_min = tf.minimum(0., self.W)
+        Z_j_positive = self.forward(X,W_max,B_plus)
+        Z_j_nagetive = self.forward(X,W_min,B_minus)
+
+        alpha = tf.ones_like(Z_j_positive, dtype=tf.float32) * alpha
+        beta = tf.ones_like(Z_j_nagetive, dtype=tf.float32) * beta
+
+        A = tf.div(alpha, Z_j_positive)
+        C = tf.div(beta, Z_j_nagetive)
+        D = tf.multiply(Rj, A)
+        E = tf.multiply(Rj, C)
 
 
+        D = self.gradprop(D, W_max)
+        E = self.gradprop(E, W_min)
+        # Z_ij_positive = tf.add(D , B)
+        # Z_ij_nagetive = tf.add(E , B)
+        Ri = tf.add(D, E)
+        return Ri
+
+    def visualize_back_prop(self):
+        pass
+
+    def average_image(self):
+        print self.output.shape
 class AvgPool(Layer):
 
     def __init__(self,input_layer,pool_dims,name):
@@ -705,7 +786,25 @@ class MaxPool(Layer):
         DX = tf.multiply(depadded,self.gradient)
         #DX = tf.multiply(depooled_dy,float(1./np.prod(self.pool_dims)))
         return DX
+    def relevance_backprop_lrp(self, Rj, alpha, beta):
+        Z = self.forward() + 1e-9
 
+
+        alpha = tf.ones_like(Z, dtype=tf.float32) * alpha
+        beta = tf.ones_like(Z, dtype=tf.float32) * beta
+
+        A = tf.div(alpha, Z)
+        C = tf.div(beta, Z)
+        D = tf.multiply(Rj, A)
+        E = tf.multiply(Rj, C)
+
+
+        D = self.gradprop(D)
+        E = self.gradprop(E)
+        # Z_ij_positive = tf.add(D , B)
+        # Z_ij_nagetive = tf.add(E , B)
+        Ri = tf.add(D, E)
+        return Ri
 '''
 class BatchNorm(Layer):
     """
@@ -794,6 +893,9 @@ class Dropout(Layer):
         return Rj
     
     def relevance_backprop_zbeta(self,Rj):
+        #Just return the input
+        return Rj
+    def relevance_backprop_lrp(self,Rj,alpha,beta):
         #Just return the input
         return Rj
 

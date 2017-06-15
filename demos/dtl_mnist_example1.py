@@ -40,7 +40,7 @@ flags.DEFINE_string('data_dir',"/tmp/data","""MNIST data directory""")
 flags.DEFINE_string('mode','train',"""Options: \'train\' or \'visualize\' """)
 flags.DEFINE_string('save_dir','demos/dtl_mnist1',"""Directory under which to place checkpoints""")
 
-flags.DEFINE_integer('num_iterations',600,""" Number of training iterations """)
+flags.DEFINE_integer('num_iterations',6000,""" Number of training iterations """)
 flags.DEFINE_integer('num_visualize',10,""" Number of samples to visualize""")
 flags.DEFINE_integer('batch_size',25,""" Number of samples to visualize""")
 
@@ -198,14 +198,17 @@ def main(_):
                 batch_xs, batch_ys = mnist.train.next_batch(1)
 
                 rj_final_op = tf.multiply(y,y_)
-                r_input,rj_final_val = sess.run([nn.relevance_backprop(rj_final_op),rj_final_op],
-                                   feed_dict={x:batch_xs,y_:batch_ys,keep_prob:1.0})
-                
-                r_input_img=np.squeeze(r_input) 
+                r_input, rj_final_val = sess.run([nn.relevance_backprop_lrp(rj_final_op,1,0.0), rj_final_op],
+                                                 feed_dict={x: batch_xs, y_: batch_ys, keep_prob: 1.0})
+                # r_input,rj_final_val = sess.run([nn.relevance_backprop(rj_final_op),rj_final_op],
+                #                    feed_dict={x:batch_xs,y_:batch_ys,keep_prob:1.0})
+                # r_input = sess.run([nn.nvidia_deconv()],
+                #                    feed_dict={x: batch_xs, y_: batch_ys, keep_prob: 1.0})
+                r_input_img=np.squeeze(r_input)
                 
                 r_input_sum = np.sum(r_input)
 
-                print "Rj final {}, Rj sum {}".format(np.sum(rj_final_val),r_input_sum)
+                # print "Rj final {}, Rj sum {}".format(np.sum(rj_final_val),r_input_sum)
 
 
                 #utils.visualize(r_input[:,2:-2,2:-2],utils.heatmap,'deeptaylortest_'+str(i)+'_.png')
@@ -224,10 +227,18 @@ def main(_):
 
 
                 #Display relevance heatmap
-                fig,ax = plt.subplots()
-                im = ax.imshow(r_input_img,cmap=plt.cm.Reds,interpolation='nearest')
-                ax.format_coord = Formatter(im)
+                fig, (ax, xx) = plt.subplots(2, 1, sharey=True)
+                # im = ax.imshow(r_input_img, cmap=plt.cm.Reds, interpolation='nearest')
+                im = ax.imshow(r_input_img)
+                im = xx.imshow(np.reshape(batch_xs[0],[28,28]))
+                # plt.imshow( r_input_img)
                 plt.show()
+                # fig,ax = plt.subplots()
+                # # im = ax.imshow(r_input_img,cmap=plt.cm.Reds,interpolation='nearest')
+                # im = ax.imshow(r_input_img)
+                #
+                # ax.format_coord = Formatter(im)
+                # plt.show()
                 
                 #gradient=np.squeeze(np.asarray(sess.run(sqr_sensitivity,feed_dict={x:batch_xs})))
                 #gradient = np.reshape(gradient,(28,28))
