@@ -8,5 +8,6 @@ visualize nvidia end to end learning
 
 # Dependent
 thanks to [LarsDu DeepNuc](https://github.com/LarsDu/DeepNuc) 
+tensorflow1.2 py27
 
 
