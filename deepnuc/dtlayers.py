@@ -1,3 +1,4 @@
+
 import tensorflow as tf
 import matplotlib.pyplot as plt
 import numpy as np
@@ -82,7 +83,7 @@ class GenericInput:
         return self._input
     
 class ImageInput:
-    def __init__(self,input_data,image_shape = [28,28,1], pad_size=2, name='img_input'):
+    def __init__(self,input_data,image_shape = [28,28,1], pad_size=0, name='img_input'):
         self._input = input_data 
         self.input_shape = self._input.get_shape().as_list()
         self.image_shape = image_shape
@@ -184,10 +185,26 @@ class Network:
             prev_layer_rj = layer.relevance_backprop_lrp(prev_layer_rj,alpha,beta)
         return prev_layer_rj
 
-    def visualize_back_prop(self):
+    def visualize_back_prop(self,output_shape):
+        """
+        :return VisualizeBackProp tensor
+        :param output_shape: Real image size which input the network
+        :return: VisualizeBackProp tensor
+        """
+        layers = []
         for i, layer in enumerate(self.layers):
-            if layer.__class__ == Conv2d:
-                layer.average_image()
+            if layer.__class__ == Conv2d :
+                layers.append(layer)
+
+        #last convolution layer, there is no layer after it
+        layers[-1].setVisualizeBackProp(previousLayer=layers[-2],afterLayer=None,shape=None)
+        #first convolution layer, there is no layer before it
+        layers[0].setVisualizeBackProp(previousLayer=None,afterLayer=layers[1],shape=[output_shape[0],output_shape[1],output_shape[2],1])
+        #layers between first and last
+        for i in range(1,len(layers)-1):
+            layers[i].setVisualizeBackProp(previousLayer=layers[i-1],afterLayer=layers[i+1],shape=None)
+        #the backProp tensor
+        return tf.reshape(layers[0].visualize_back_prop_deconv(),shape=output_shape)
 
 class Layer:
     def get_layers_list(self):
@@ -430,6 +447,12 @@ class Flatten(Layer):
     
                               
 class Conv2d(Layer):
+
+    class forVisualizeBackPropClass():
+        def __init__(self, previousLayer=None,afterLayer=None,shape=None):
+            self.previousLayer = previousLayer
+            self.afterLayer = afterLayer
+            self.shape = shape
     def __init__(self,
                  input_layer,
                  filter_shape,
@@ -443,6 +466,7 @@ class Conv2d(Layer):
         self.padding = padding
         self.strides = strides
         self.name = name
+        self.forVisualizeBackProp = None
 
         #self.name
         with tf.variable_scope(self.name) as scope:
@@ -460,13 +484,14 @@ class Conv2d(Layer):
         
         self.lowest=0.
         self.highest=1.
-        
+        self.average = self.average_image()
         print "Conv2d input",self.name,"shape:",self.input_shape
         print "Conv2d filter",self.name,"shape:",self.filter_shape
         print "Conv2d padding mode",self.padding,"\n"
         print "Conv2d output shape",self.output_shape,"\n"
         
-
+    def setVisualizeBackProp(self,previousLayer=None,afterLayer=None,shape=None):
+        self.forVisualizeBackProp = self.forVisualizeBackPropClass(previousLayer,afterLayer,shape)
 
     def set_input_bounds(self,low_val,high_val):
         """
@@ -591,8 +616,40 @@ class Conv2d(Layer):
     def visualize_back_prop(self):
         pass
 
+    def visualize_back_prop_deconv(self):
+        with tf.variable_scope(self.name + '_deconv') as scope:
+            deconvFilter = tf.ones([self.filter_shape[0], self.filter_shape[1], 1, 1], dtype=tf.float32)
+            #the last convolution layer
+            if self.forVisualizeBackProp.afterLayer is None:
+
+                shape = [self.output_shape[0], self.forVisualizeBackProp.previousLayer.output_shape[1],
+                                                         self.forVisualizeBackProp.previousLayer.output_shape[2], 1]
+                p = tf.nn.conv2d_transpose(self.average, deconvFilter,
+                                           output_shape=shape,
+                                           strides=self.strides, padding='VALID', name='devonv')
+                return p
+            else:
+                #the first convolution layer
+                if self.forVisualizeBackProp.previousLayer is None:
+                    shape = self.forVisualizeBackProp.shape
+                #other layers
+                else:
+                    shape = [self.output_shape[0],self.forVisualizeBackProp.previousLayer.output_shape[1],self.forVisualizeBackProp.previousLayer.output_shape[2],1]
+                try:
+                    mutiply = tf.multiply(self.average,self.forVisualizeBackProp.afterLayer.visualize_back_prop_deconv())
+                    p = tf.nn.conv2d_transpose(mutiply, deconvFilter, output_shape=shape,
+                                           strides=self.strides,padding='VALID',name='devonv')
+                    return p
+                except tf.errors.InvalidArgumentError:
+                    print("error {}".format(self.name))
+
+
     def average_image(self):
-        print self.output.shape
+        with tf.variable_scope(self.name + '_average') as scope:
+            x = tf.ones((self.output_shape[3]), dtype=np.float32)
+            p = tf.tensordot(self.output, x, axes=[[3], [0]])
+            p = tf.reshape(p,shape=[self.output_shape[0], self.output_shape[1],  self.output_shape[2], 1],name = 'average')
+        return p
 class AvgPool(Layer):
 
     def __init__(self,input_layer,pool_dims,name):

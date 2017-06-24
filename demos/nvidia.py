@@ -7,12 +7,12 @@ time: 17-6-8
 import os
 import tensorflow as tf
 import matplotlib.pyplot as plt
-import driving_data
+import deepnuc.readData as Batch
 import deepnuc.dtlayers as dtl
 import scipy
 import numpy as np
-from deepnuc.formatplot import Formatter
 import sys
+import signal
 sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__),os.path.pardir)))
 
@@ -23,10 +23,10 @@ FLAGS = tf.app.flags.FLAGS
 
 
 flags.DEFINE_string('mode','train',"""Options: \'train\' or \'visualize\' """)
-flags.DEFINE_string('save_dir','demos/nvidia',"""Directory under which to place checkpoints""")
-
-flags.DEFINE_integer('num_iterations',50,""" Number of training iterations """)
-flags.DEFINE_integer('num_visualize',10,""" Number of samples to visualize""")
+flags.DEFINE_string('save_dir','demos/nvidia1',"""Directory under which to place checkpoints""")
+flags.DEFINE_string('image_dir','/home/zj/Desktop/save',"""Directory under which to place checkpoints""")
+flags.DEFINE_integer('num_epochs',30,""" Number of training epochs """)
+flags.DEFINE_integer('num_visualize_save',10000,""" Number of VisualizeBackProp image to save""")
 flags.DEFINE_integer('batch_size',25,""" Number of samples to visualize""")
 
 sess = tf.InteractiveSession()
@@ -43,17 +43,24 @@ def main(_):
     stride_1 = [1, 1, 1, 1]
     stride_2 = [1, 2, 2, 1]
     mode = FLAGS.mode
-    num_visualize = FLAGS.num_visualize
-    num_iterations = FLAGS.num_iterations
-    batch_size = FLAGS.batch_size
-
+    num_visualize_save = FLAGS.num_visualize_save
+    epochs = FLAGS.num_epochs
+    image_save_dir = FLAGS.image_dir
     save_dir = FLAGS.save_dir
     checkpoint_dir = save_dir + "/checkpoints"
     summary_dir = save_dir + "/summaries"
 
-    x = tf.placeholder(tf.float32, [None, 66, 200, 3], name='input')
+    if mode == "train":
+        batch_size = FLAGS.batch_size
+        batch = Batch.readData('/home/zj/Downloads/Autopilot-TensorFlow-master/driving_dataset/',batch_size,4,1000,'data.txt',True)
+    else:
+        batch_size = 1
+        batch = Batch.readData('/home/zj/Downloads/Autopilot-TensorFlow-master/driving_dataset/',batch_size,1,1000,'data.txt',False)
+
+    batch.getFiles()
+    image_batch, label_batch = batch.getBatch()
     keep_prob = tf.placeholder(tf.float32, name='drop')
-    x_image = dtl.ImageInput(x, image_shape=[66, 200, 3])
+    x_image = dtl.ImageInput(image_batch, pad_size=0,image_shape=[66, 200, 3])
 
     conv1 = dtl.Conv2d(x_image, filter_shape=[5, 5, 3, 24], strides = stride_2 , padding = 'VALID', name='conv1')
     relu1 = dtl.Relu(conv1, name='relu1')
@@ -89,101 +96,96 @@ def main(_):
     nn = dtl.Network(x_image, [output])
 
     y = nn.forward()
-    y_ = tf.placeholder(tf.float32, shape=[None, 1])
+
 
     train_vars = tf.trainable_variables()
-    loss = tf.reduce_mean(tf.square(tf.subtract(y_, y))) + tf.add_n(
+    loss = tf.reduce_mean(tf.square(tf.subtract(label_batch, y))) + tf.add_n(
         [tf.nn.l2_loss(v) for v in train_vars]) * L2NormConst
     train_step = tf.train.AdamOptimizer(1e-4).minimize(loss)
-
+    visualizeBackProp = tf.image.grayscale_to_rgb(nn.visualize_back_prop([batch_size,66,200,1]))
 
     with tf.Session() as sess:
         init_op = tf.global_variables_initializer()
         sess.run(init_op)
         saver = tf.train.Saver()
-        merged_summary_op = tf.summary.merge_all()
+
+        imageShow = [tf.concat([image_batch[i,:,:,:]*255,visualizeBackProp[i,:,:,:]*255] ,axis=0) for i in range(batch_size)]
+        summary_writer = tf.summary.FileWriter(summary_dir, sess.graph)
+
+
+        coord = tf.train.Coordinator()
+        threads = tf.train.start_queue_runners(sess=sess, coord=coord)
 
         if mode == "train":
-            summary_writer = tf.summary.FileWriter(summary_dir,sess.graph)
+            tf.summary.image("image", imageShow, max_outputs=4)
+            tf.summary.scalar("loss", loss)
+            merged_summary_op = tf.summary.merge_all()
+
             ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
-            for i in range(num_iterations):
-                xs, ys = driving_data.LoadTrainBatch(batch_size)
-                if i % 10 == 0:
-                    print (i, "training iterations passed")
-                    loss_value = loss.eval(feed_dict={x: xs, y_: ys, keep_prob: 1.0})
-                    print ("step:{}  loss:{}".format(i , loss_value))
-                sess.run(train_step, feed_dict={x: xs, y_: ys, keep_prob:1.0})
-                summary = merged_summary_op.eval(feed_dict={x: xs, y_: ys, keep_prob: 1.0})
-                summary_writer.add_summary(summary, i)
-                if i % 25 == 0:
-                    ckpt_name = "model_ckpt"
-                    save_path = saver.save(sess, checkpoint_dir + os.sep + ckpt_name)
-                    print "save"
-            ckpt_name = "model_ckpt"
-            save_path = saver.save(sess, checkpoint_dir + os.sep + ckpt_name)
-            print "done"
-            # ckpt_name = "model_ckpt"
-            # save_path = saver.save(sess, checkpoint_dir + os.sep + ckpt_name)
-            # print("Model saved in file: %s" % save_path)
+
+            if ckpt and ckpt.model_checkpoint_path:
+                print ("Checkpoint restored")
+                saver.restore(sess, ckpt.model_checkpoint_path)
+            else:
+                print ("No checkpoint found on ", ckpt)
+
+            ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
+
+            try:
+                for epoch in range(epochs):
+                    for i in range(int(batch.size / batch.batch_size)):
+                        if coord.should_stop():
+                            print ("stop")
+                            break
+
+                        sess.run(train_step, feed_dict={keep_prob: 1.0})
+
+                        summary = merged_summary_op.eval(feed_dict={keep_prob: 1.0})
+                        summary_writer.add_summary(summary, i)
+                        loss_value = loss.eval(feed_dict={keep_prob: 1.0})
+                        save_path = saver.save(sess, checkpoint_dir + os.sep + "model_ckpt")
+                        print ("loss: {}, {} training iterations passed".format(loss_value,i))
+
+                    print ("finish epoch:{}".format(epoch))
+            except tf.errors.OutOfRangeError:
+                print('done!')
+            finally:
+                coord.request_stop()
+            coord.join(threads)
         else:
-
             ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
-            saver.restore(sess, ckpt.model_checkpoint_path)
-            # f = open('/home/zj/Desktop/data.txt', 'w')
-            # for i in range(2000):
-            #     full_image = scipy.misc.imread(
-            #         "/home/zj/Downloads/Autopilot-TensorFlow-master/driving_dataset/" + str(i) + ".jpg", mode="RGB")
-            #     image = scipy.misc.imresize(full_image[-150:], [66, 200]) / 255.0
-            #
-            #     print y.eval(feed_dict={x: [image], keep_prob: 1.0})[0][0]
-            #     f.write(str(y.eval(feed_dict={x: [image], keep_prob: 1.0})[0][0]* 180.0 / scipy.pi)+'\n')
-            #     # plt.imshow(full_image)
-            #     # plt.show()
-            # f.close()
-            # xs, ys = driving_data.LoadTrainBatch(1)
+            tf.summary.image("image", imageShow, max_outputs=1)
+            merged_summary_op = tf.summary.merge_all()
 
-            # nn.nvidia_deconv()
-            for i in range(10):
-                xs, ys = driving_data.LoadTrainBatch(1)
-                # plt.imshow(xs[0])
-                # plt.show()
-                xxxx = fc1.output.eval(feed_dict={x: xs, y_: ys, keep_prob: 1.0})
+            if ckpt and ckpt.model_checkpoint_path:
+                print ("Checkpoint restored")
+                saver.restore(sess, ckpt.model_checkpoint_path)
+            else:
+                print ("No checkpoint found on ", ckpt)
+            try:
 
-                rj_final_op = tf.multiply(y, y_)
+                for i in range(num_visualize_save):
+                    if coord.should_stop():
+                        print ("stop")
+                        break
+                    scipy.misc.imsave('image_save_dir' +'/' +str(i) +'.png',imageShow[0].eval(feed_dict={keep_prob: 1.0}))
+                    summary = merged_summary_op.eval(feed_dict={keep_prob: 1.0})
+                    summary_writer.add_summary(summary)
 
-                r_input, rj_final_val = sess.run([nn.relevance_backprop_lrp(rj_final_op, 1, 0.0), rj_final_op],
-                                                 feed_dict={x: xs, y_: ys, keep_prob: 1.0})
-                # r_input, rj_final_val = sess.run([nn.relevance_backprop(rj_final_op), rj_final_op],
-                #                                  feed_dict={x: xs, y_: ys, keep_prob: 1.0})
+            except tf.errors.OutOfRangeError:
+                print('done!')
+            finally:
+                coord.request_stop()
+            coord.join(threads)
+                # x = nn.visualize_back_prop([batch_size,66,200])
+            # aaa = tf.placeholder(tf.float32, shape=[None, 66, 200, 3])
+            # image = scipy.misc.imresize(
+            #     scipy.misc.imread('/home/zj/Downloads/Autopilot-TensorFlow-master/driving_dataset/' + '1.jpg')[ -150:], [66, 200])
+            # b = sess.run(x,feed_dict={aaa:[image],keep_prob: 1.0})
+            # plt.imshow(b[0],plt.cm.gray)
+            # plt.show()
 
-                # r_input = sess.run([nn.nvidia_deconv()],
-                #                    feed_dict={x: xs, y_: ys, keep_prob: 1.0})
-                r_input_img = np.squeeze(r_input / np.max(r_input))
 
-                r_input_sum = np.sum(r_input)
 
-                # print "Rj final {}, Rj sum {}".format(np.sum(rj_final_val), r_input_sum)
-
-                # utils.visualize(r_input[:,2:-2,2:-2],utils.heatmap,'deeptaylortest_'+str(i)+'_.png')
-
-                # Display original input
-                # plt.imshow(np.reshape(np.asarray(batch_xs),(28,28)))
-
-                yguess_mat = sess.run(y,
-                                      feed_dict={x: xs, y_: ys,keep_prob:1.0})
-                # yguess = yguess_mat.tolist()
-                # yguess = yguess[0].index(max(yguess[0]))
-                # actual = ys[0].tolist().index(1.)
-                #
-                # print ("Guess:", (yguess))
-                # print ("Actual:", (actual))
-
-                # Display relevance heatmap
-                fig, (ax ,xx)= plt.subplots(2, 1, sharey=True)
-                # im = ax.imshow(r_input_img, cmap=plt.cm.Reds, interpolation='nearest')
-                im = ax.imshow(r_input_img)
-                im = xx.imshow(xs[0])
-                # plt.imshow( r_input_img)
-                plt.show()
 if __name__ == '__main__':
     tf.app.run()
