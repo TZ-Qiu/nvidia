@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/DeepNuc-master.iml" filepath="$PROJECT_DIR$/.idea/DeepNuc-master.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/VisualizeBackProp.iml" filepath="$PROJECT_DIR$/.idea/VisualizeBackProp.iml" />
     </modules>
   </component>
 </project>
